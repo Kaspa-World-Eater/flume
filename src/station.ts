@@ -10,6 +10,8 @@
  * file, because a chunk of a stream and a chunk of a file are the same thing: a range of bytes
  * both sides can count. That is why this rides on the same protocol as pay-per-byte downloads.
  */
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface Station {
   /** The catalogue name a listener tunes to. */
@@ -89,4 +91,13 @@ export class StationRewind extends Error {
   constructor(readonly station: string, readonly asked: number, readonly floor: number) {
     super(`station ${station}: offset ${asked} is below the live window floor ${floor}`);
   }
+}
+
+/** Every non-empty file under a directory becomes an on-demand station named by its filename. */
+export function stationsFrom(root: string): Station[] {
+  const one = (name: string): Station => onDemand(name, new Uint8Array(readFileSync(join(root, name))));
+  const names = readdirSync(root, { withFileTypes: true })
+    .filter((e) => e.isFile() && !e.name.startsWith('.') && statSync(join(root, e.name)).size > 0)
+    .map((e) => e.name);
+  return names.map(one);
 }

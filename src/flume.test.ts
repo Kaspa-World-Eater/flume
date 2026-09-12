@@ -18,6 +18,7 @@ import { tune, readGuide } from './listener.js';
 import { streamTerms } from './terms.js';
 import { decodeAsk, encodeAsk, MalformedAsk } from './ask.js';
 import { stationDeliver, NoSuchStation } from './broadcaster.js';
+import { claimTooSmall, STORAGE_MASS_LIMIT } from './storage-mass.js';
 
 const BROADCASTER_SK = 'c3'.repeat(32);
 const LISTENER_SK = 'd4'.repeat(32);
@@ -159,4 +160,17 @@ test('a broadcaster that overstates what it sent is refused, and the stream stop
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
+});
+
+
+test('the storage-mass guard refuses a too-small channel and clears a comfortable one', () => {
+  const chan = (amount: bigint) => ({ active: { amount } }) as Parameters<typeof claimTooSmall>[0];
+  // The live case that the node rejected: 0.06 KAS claimed on a 0.1 KAS channel.
+  const tooSmall = claimTooSmall(chan(10_000_000n), 6_000_000n, 500_000n);
+  assert.ok(tooSmall && /larger channel/.test(tooSmall), 'refused with a plain instruction');
+  // Comfortably above the claim (spigot cleared the same rule at this size): allowed.
+  assert.equal(claimTooSmall(chan(100_000_000n), 6_000_000n, 500_000n), null, 'a large channel is fine');
+  // A claim that leaves nothing behind is refused outright.
+  assert.ok(claimTooSmall(chan(10_000_000n), 10_000_000n, 500_000n), 'no continuation is refused');
+  assert.equal(STORAGE_MASS_LIMIT, 500_000n);
 });

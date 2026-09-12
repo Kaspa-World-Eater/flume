@@ -1,24 +1,16 @@
 /**
  * `flume` -- broadcast a stream, or tune in and pay per second on the kaspa-x402 rail.
- *
- *   flume serve <dir> [--price N] [--port N] [--babel N]     broadcast every file under <dir> as a station
- *   flume guide <url>                                         see what's on the air
- *   flume channel open <url> [--escrow KAS]                   listener: open a payment channel
- *   flume channels                                            listener: your open channels
- *   flume tune <url> <station> [--out FILE] [--pay] [--seconds N]   listen; --pay bills the channel
- *   flume refund <covenantId>                                listener: reclaim a channel after its timeout
- *   flume claim <covenantId>                                 broadcaster: claim what a channel's vouchers cover
- *   flume address [--role listener|broadcaster]
+ * Run with no arguments for the command list (see `usage` below).
  *
  * The money is a kaspa-x402 escrow channel, exactly as in spigot: open once, listen to as much as
  * you like against it, refund the rest. metered meters each second by two-sided count; the rail pays.
  */
-import { statSync, readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from 'node:fs';
-import { basename, resolve, join } from 'node:path';
+import { statSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fileSessionStore } from 'metered-protocol';
 import type { Network } from 'metered-protocol/rail';
-import { onDemand, type Station } from '../src/station.js';
+import { stationsFrom } from '../src/station.js';
 import { broadcast, GUIDE_PATH } from '../src/broadcaster.js';
 import { tune, readGuide } from '../src/listener.js';
 import { streamTerms, kas } from '../src/terms.js';
@@ -54,15 +46,6 @@ function usage(): never {
     '',
   ].join('\n'));
   process.exit(1);
-}
-
-/** Every non-empty file under <dir> becomes an on-demand station named by its path. */
-function stationsFrom(root: string): Station[] {
-  const one = (name: string): Station => onDemand(name, new Uint8Array(readFileSync(join(root, name))));
-  const names = readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isFile() && !e.name.startsWith('.') && statSync(join(root, e.name)).size > 0)
-    .map((e) => e.name);
-  return names.map(one);
 }
 
 async function serve(): Promise<void> {
