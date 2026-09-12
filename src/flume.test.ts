@@ -1,0 +1,162 @@
+/**
+ * What flume promises, pinned.
+ *
+ * metered's own suite proves the payment. These are the claims streaming adds on top:
+ *   - a whole recording plays through, byte for byte;
+ *   - STOPPING MID-STREAM pays for what played and nothing after -- the headline property;
+ *   - a live feed delivers as it grows, and waiting at the edge costs nothing;
+ *   - a listener that tuned in late cannot be charged for bytes it will never get (a rewind).
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
+import { publicKeyHex } from 'metered-protocol';
+import { onDemand, LiveStation, StationRewind, type Station } from './station.js';
+import { broadcast } from './broadcaster.js';
+import { tune, readGuide } from './listener.js';
+import { streamTerms } from './terms.js';
+import { decodeAsk, encodeAsk, MalformedAsk } from './ask.js';
+import { stationDeliver, NoSuchStation } from './broadcaster.js';
+
+const BROADCASTER_SK = 'c3'.repeat(32);
+const LISTENER_SK = 'd4'.repeat(32);
+const NETWORK = 'kaspa:testnet-10';
+const PRICE = 1;
+
+/** A recording of `n` bytes with a recognisable pattern, so a gap in playback would show. */
+const recording = (n: number): Uint8Array => Uint8Array.from({ length: n }, (_, i) => (i * 7 + 3) % 251);
+
+interface Air { base: string; server: Server; stop: () => Promise<void> }
+
+async function onAir(stations: Station[], babelBytes = 256): Promise<Air> {
+  const terms = streamTerms({ network: NETWORK, sompiPerByte: PRICE, babelBytes, sessionBytes: 1_000_000 });
+  const { server } = broadcast({
+    stations, terms, providerSk: BROADCASTER_SK, providerPubkey: publicKeyHex(BROADCASTER_SK),
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  return {
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    server,
+    stop: () => new Promise<void>((r) => server.close(() => r())),
+  };
+}
+
+test('the guide lists what is on the air, live and on-demand alike', async () => {
+  const air = await onAir([onDemand('song', recording(2000)), new LiveStation('radio')]);
+  try {
+    const guide = await readGuide(air.base);
+    assert.deepEqual(guide.stations.map((s) => [s.name, s.kind]).sort(), [['radio', 'live'], ['song', 'on-demand']]);
+    assert.equal(guide.stations.find((s) => s.name === 'song')?.available, 2000);
+  } finally {
+    await air.stop();
+  }
+});
+
+test('A WHOLE RECORDING PLAYS THROUGH, byte for byte', async () => {
+  const bytes = recording(2000);
+  const air = await onAir([onDemand('song', bytes)], 256);
+  try {
+    const got: number[] = [];
+    const { receipt } = await tune({ base: air.base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK, onBytes: (c) => got.push(...c) });
+    assert.deepEqual(new Uint8Array(got), bytes, 'every byte, in order');
+    assert.equal(receipt.bytesPlayed, 2000);
+    assert.equal(receipt.sompiSpent, 2000 * PRICE, 'paid for exactly what played');
+    assert.equal(receipt.until, 'ended');
+    assert.equal(receipt.chunks, Math.ceil(2000 / 256));
+  } finally {
+    await air.stop();
+  }
+});
+
+test('STOPPING MID-STREAM pays for what played and nothing after -- the headline', async () => {
+  const air = await onAir([onDemand('song', recording(10_000))], 256);
+  try {
+    // Stop once about a quarter of the way in. The listener leaves; the meter stops at that byte.
+    let played = 0;
+    const { receipt } = await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK,
+      onBytes: (c) => { played += c.length; },
+      stop: () => played >= 2500,
+    });
+    assert.equal(receipt.until, 'stopped');
+    assert.ok(receipt.bytesPlayed >= 2500 && receipt.bytesPlayed < 3000, `stopped promptly, at ${receipt.bytesPlayed}`);
+    assert.equal(receipt.sompiSpent, receipt.bytesPlayed * PRICE, 'paid for the seconds that played, not the whole track');
+    assert.ok(receipt.sompiSpent < 10_000 * PRICE, 'nowhere near the price of the whole recording');
+  } finally {
+    await air.stop();
+  }
+});
+
+test('A LIVE FEED delivers as it grows, and waiting at the edge costs nothing', async () => {
+  const radio = new LiveStation('radio');
+  const air = await onAir([radio], 128);
+  try {
+    // Feed the station on a clock while a listener tunes in and stops after a second of "air".
+    let fed = 0;
+    const clock = setInterval(() => { radio.push(recording(200)); fed += 200; }, 30);
+    const got: number[] = [];
+    const start = Date.now();
+    const { receipt } = await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'radio', expectedNetwork: NETWORK, liveGapMs: 20,
+      onBytes: (c) => got.push(...c),
+      stop: () => Date.now() - start > 700,
+    });
+    clearInterval(clock);
+    assert.equal(receipt.until, 'stopped');
+    assert.ok(receipt.bytesPlayed > 0, 'played some of the live feed');
+    // The listener caught up to the edge repeatedly (empty chunks) and was billed for none of them.
+    assert.equal(receipt.sompiSpent, receipt.bytesPlayed * PRICE, 'billed only for bytes that actually arrived');
+    assert.ok(receipt.bytesPlayed <= fed, 'never billed ahead of what was produced');
+  } finally {
+    await air.stop();
+  }
+});
+
+test('a live station keeps only a window: a rewind below the floor is refused, not faked', () => {
+  const radio = new LiveStation('radio', 1000);
+  radio.push(recording(1500)); // overflows the 1000-byte window; floor advances to 500
+  assert.equal(radio.available(), 1500);
+  assert.throws(() => radio.read(100, 128), StationRewind, 'below the floor');
+  assert.doesNotThrow(() => radio.read(600, 128), 'inside the window is fine');
+});
+
+test('an on-demand station ends; a live one ends only when the broadcaster closes it', () => {
+  const song = onDemand('song', recording(100));
+  assert.equal(song.ended(100), true);
+  const radio = new LiveStation('radio');
+  radio.push(recording(100));
+  assert.equal(radio.ended(100), false, 'caught up is not ended, for a live feed');
+  radio.close();
+  assert.equal(radio.ended(100), true, 'closed and caught up is ended');
+});
+
+test('the ask is validated, and an unknown station is refused', () => {
+  assert.deepEqual(decodeAsk(encodeAsk({ name: 'radio', offset: 40 })), { name: 'radio', offset: 40 });
+  for (const bad of ['', '{}', '{"name":"a"}', '{"name":"","offset":0}', '{"name":"a","offset":-1}']) {
+    assert.throws(() => decodeAsk(bad), MalformedAsk, bad);
+  }
+  const deliver = stationDeliver(new Map([['song', onDemand('song', recording(100))]]));
+  assert.throws(() => deliver(encodeAsk({ name: 'ghost', offset: 0 }), 128), NoSuchStation);
+});
+
+test('a broadcaster that overstates what it sent is refused, and the stream stops', async () => {
+  // A dishonest broadcaster whose meter doubles the count. The listener counts the same bytes,
+  // they disagree past a tolerance of zero, and tune surfaces the halt rather than swallowing it.
+  const terms = streamTerms({ network: NETWORK, sompiPerByte: PRICE, babelBytes: 256, sessionBytes: 1_000_000 });
+  const { server } = broadcast({
+    stations: [onDemand('song', recording(2000))], terms,
+    providerSk: BROADCASTER_SK, providerPubkey: publicKeyHex(BROADCASTER_SK),
+    meter: (c: Uint8Array) => c.length * 2,
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    await assert.rejects(
+      () => tune({ base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK, onBytes: () => {} }),
+      /differ by more than/,
+    );
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});

@@ -1,0 +1,127 @@
+/**
+ * The buying half: tune in, pull the stream a chunk at a time, and pay for the seconds that play.
+ *
+ * The one property that makes streaming different from buying a file: **the listener decides when
+ * to stop, and stops paying at that byte.** No plan, no cancellation, no minimum. `tune` pulls
+ * chunks until the caller says stop, the station ends, or the money runs out -- and whichever comes
+ * first, the listener has paid for exactly what it received and not one byte more.
+ *
+ * A live edge is not the end. When a live station has no new bytes yet, the chunk comes back empty
+ * (the broadcaster billed nothing for it, because nothing arrived), and `tune` waits a beat and
+ * asks again. Only an explicit end from the broadcaster, or the caller's own `stop`, ends the loop.
+ */
+import { openSession, runBabel, meterFor, type BuyerSession, type ChannelProposal } from 'metered-protocol';
+import { encodeAsk } from './ask.js';
+import { GUIDE_PATH } from './broadcaster.js';
+
+export class OffTheAir extends Error {}
+
+export interface Guide {
+  stations: { name: string; kind: 'on-demand' | 'live'; available: number }[];
+  terms: { unit: string; meter: string; unitPriceSompi: number; babelUnits: number; network: string; responseWindowDaa: number };
+  providerPubkey: string;
+}
+
+export interface TuneReceipt {
+  station: string;
+  bytesPlayed: number;
+  sompiSpent: number;
+  chunks: number;
+  /** Why the loop ended: the caller stopped, the station closed, or the funds could not cover more. */
+  until: 'stopped' | 'ended' | 'exhausted';
+  settlement: { covenantId: string; vouchedSompi: number } | null;
+}
+
+/** Read the guide of what a broadcaster has on the air. Unpaid: deciding to tune requires seeing it. */
+export async function readGuide(base: string): Promise<Guide> {
+  const res = await fetch(`${base}${GUIDE_PATH}`);
+  if (!res.ok) throw new OffTheAir(`guide unavailable: HTTP ${res.status}`);
+  return await res.json() as Guide;
+}
+
+export interface TuneOptions {
+  base: string;
+  listenerSk: string;
+  station: string;
+  /** Called with each chunk of bytes as it plays. This is where audio/video is handed to a decoder. */
+  onBytes: (chunk: Uint8Array) => void;
+  /** Return true to stop. Checked before every chunk -- this is how a listener leaves at any moment. */
+  stop?: () => boolean;
+  /** How long to wait at a live edge before asking again, ms. */
+  liveGapMs?: number;
+  expectedNetwork?: string;
+  /** A channel this listener holds with the broadcaster, to pay through (SPEC.md 3.5). */
+  channel?: ChannelProposal;
+}
+
+/**
+ * Tune in and play until stopped.
+ *
+ * The offset only ever moves by what actually arrived, so a stall costs nothing and a reconnect is
+ * free. Payment is per chunk, off-chain, through metered's session; the broadcaster claims on chain
+ * whenever it likes.
+ */
+export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; session: BuyerSession }> {
+  const guide = await readGuide(opts.base);
+  const entry = guide.stations.find((st) => st.name === opts.station);
+  if (!entry) throw new OffTheAir(`nothing on the air called ${JSON.stringify(opts.station)}`);
+  const meter = meterFor(guide.terms.meter, guide.terms.unit);
+  const { offer, session } = await openSession(opts.base, opts.listenerSk, meter, opts.expectedNetwork, undefined, opts.channel);
+
+  // A RECORDING HAS A KNOWN LENGTH; a live feed does not. For on-demand, the end is exactly the
+  // guide's length -- no waiting. For live, the end can only be discovered by asking and finding
+  // nothing new, again and again, until the feed is clearly over.
+  const fixedLength = entry.kind === 'on-demand' ? entry.available : null;
+  const gap = opts.liveGapMs ?? 250;
+  let offset = 0;
+  let chunks = 0;
+  let idle = 0;
+  let until: TuneReceipt['until'] = 'ended';
+
+  while (true) {
+    if (opts.stop?.()) { until = 'stopped'; break; }
+    if (fixedLength !== null && offset >= fixedLength) { until = 'ended'; break; }
+
+    let outcome;
+    try {
+      outcome = await runBabel(opts.base, session, encodeAsk({ name: opts.station, offset }));
+    } catch (err) {
+      // A halt on disagreement, or funds that cannot cover another chunk, ends the listen -- the
+      // listener keeps what it already paid for and played.
+      if (isExhausted(err)) { until = 'exhausted'; break; }
+      throw err;
+    }
+
+    if (outcome.content.length === 0) {
+      // A live edge, or the end. Wait a beat; if the broadcaster has closed the station it will
+      // keep returning empty, and a caller watching an on-demand station can stop on its own.
+      idle += 1;
+      if (idle > MAX_IDLE) { until = 'ended'; break; }
+      await new Promise((r) => setTimeout(r, gap));
+      continue;
+    }
+
+    idle = 0;
+    opts.onBytes(outcome.content);
+    offset += outcome.content.length;
+    chunks += 1;
+  }
+
+  return {
+    session,
+    receipt: {
+      station: opts.station,
+      bytesPlayed: offset,
+      sompiSpent: session.spentSompi,
+      chunks,
+      until,
+      settlement: offer.channel ?? null,
+    },
+  };
+}
+
+/** Empty chunks tolerated at a live edge before the stream is treated as over. */
+const MAX_IDLE = 40;
+
+const isExhausted = (err: unknown): boolean =>
+  err instanceof Error && /funds|cover|exhaust|babelUnits|maxBabels/i.test(err.message);
