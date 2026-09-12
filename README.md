@@ -5,7 +5,7 @@ you stop, so does the meter.**
 
 No subscription, no plan, no cancellation. Tune in, and each second of stream is measured by both
 sides and paid for as it arrives. Close the tab and you have paid for exactly what you heard, to the
-byte. Built on [metered](https://github.com/kaspahttp402/metered) and settled on Kaspa.
+byte. Built on [metered](https://github.com/kaspahttp402/metered-protocol) and settled on Kaspa.
 
 **→ [Read what flume is, in one page](https://kaspahttp402.github.io/flume/)** — the idea, how a listen works, and why machines will want it.
 
