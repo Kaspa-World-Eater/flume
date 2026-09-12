@@ -1,0 +1,377 @@
+<title>flume</title>
+<meta name="description" content="Pay-per-second streaming where stopping mid-stream pays to the byte, settled on Kaspa.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  :root{
+    --bg:#eef2f3; --surface:#ffffff; --surface-2:#f6f9fa;
+    --ink:#0f1519; --muted:#54636d; --faint:#7d8a93; --line:#dde5e9;
+    --aqua:#079b98; --aqua-deep:#065f5d; --aqua-soft:#d5edec;
+    --amber:#c26a1e; --amber-soft:#f6e6d3;
+    --good:#2c9455;
+    --shadow:0 1px 2px rgba(16,25,31,.05),0 8px 24px -12px rgba(16,25,31,.18);
+    --dspace:.012em;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0a0f12; --surface:#111a1f; --surface-2:#0e1519;
+      --ink:#e9f1f4; --muted:#9db0ba; --faint:#6f828c; --line:#20303a;
+      --aqua:#31d6d0; --aqua-deep:#8ff0ec; --aqua-soft:#123330;
+      --amber:#f0a457; --amber-soft:#2e2113;
+      --good:#4fce80;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 30px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0a0f12; --surface:#111a1f; --surface-2:#0e1519;
+    --ink:#e9f1f4; --muted:#9db0ba; --faint:#6f828c; --line:#20303a;
+    --aqua:#31d6d0; --aqua-deep:#8ff0ec; --aqua-soft:#123330;
+    --amber:#f0a457; --amber-soft:#2e2113;
+    --good:#4fce80;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 30px -14px rgba(0,0,0,.6);
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Public Sans",system-ui,-apple-system,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px; margin:0 auto; padding:0 24px}
+  h1,h2,h3{font-family:"Bricolage Grotesque","Public Sans",sans-serif; line-height:1.06; text-wrap:balance; letter-spacing:-.01em; margin:0}
+  a{color:var(--aqua-deep); text-decoration-color:color-mix(in srgb,var(--aqua) 45%,transparent); text-underline-offset:3px}
+  a:hover{text-decoration-color:var(--aqua)}
+  code,.mono{font-family:"JetBrains Mono",ui-monospace,monospace}
+  .eyebrow{font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--aqua-deep)}
+
+  /* ---- top bar ---- */
+  header.top{display:flex; align-items:center; justify-content:space-between; padding:22px 0 8px}
+  .brand{display:flex; align-items:center; gap:10px; font-family:"Bricolage Grotesque"; font-weight:800; font-size:20px; letter-spacing:var(--dspace)}
+  .mark{width:26px;height:26px;flex:0 0 auto}
+  .toplinks{display:flex; gap:18px; align-items:center; font-size:14px}
+  .toplinks a{color:var(--muted); text-decoration:none}
+  .toplinks a:hover{color:var(--ink)}
+
+  /* ---- hero ---- */
+  .hero{padding:34px 0 20px}
+  .hero h1{font-size:clamp(44px,8.5vw,86px); font-weight:800; letter-spacing:-.03em}
+  .hero .lede{font-size:clamp(18px,2.4vw,23px); color:var(--muted); max-width:30ch; margin:18px 0 0; line-height:1.4}
+  .hero .lede b{color:var(--ink); font-weight:600}
+
+  /* ---- the live meter demo ---- */
+  .player{
+    margin:30px 0 6px; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; box-shadow:var(--shadow); overflow:hidden;
+  }
+  .player .head{display:flex; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid var(--line)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 60%,transparent)}
+  .playing .dot{animation:pulse 1.8s ease-out infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 55%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .nowlabel{font-size:13px;color:var(--faint)}
+  .nowlabel b{color:var(--ink);font-weight:600}
+  .state{margin-left:auto; font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--good)}
+  .stopped .state{color:var(--amber)}
+  .wave{display:flex; align-items:flex-end; gap:3px; height:74px; padding:18px 20px 8px}
+  .wave i{flex:1; background:color-mix(in srgb,var(--aqua) 32%,transparent); border-radius:2px 2px 0 0; min-height:3px; transition:background .2s}
+  .wave i.on{background:var(--aqua)}
+  .readout{display:grid; grid-template-columns:1fr 1fr auto; gap:14px; align-items:end; padding:6px 20px 20px}
+  .metric .k{font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--faint); font-family:"JetBrains Mono",monospace}
+  .metric .v{font-family:"JetBrains Mono",monospace; font-weight:700; font-size:clamp(22px,3.6vw,30px); color:var(--ink); font-variant-numeric:tabular-nums; line-height:1.1}
+  .metric.paid .v{color:var(--amber)}
+  .controls{display:flex; gap:8px}
+  button.act{
+    font-family:"Public Sans",sans-serif; font-weight:600; font-size:14px; cursor:pointer;
+    border-radius:10px; padding:10px 16px; border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  }
+  button.act:hover{border-color:var(--aqua)}
+  button.stop{background:var(--aqua); border-color:var(--aqua); color:#fff}
+  :root[data-theme="dark"] button.stop,:root:not([data-theme="light"]) button.stop{color:#07201f}
+  @media (prefers-color-scheme:light){button.stop{color:#fff}}
+  button.act:disabled{opacity:.45; cursor:default}
+  .caption{padding:0 20px 18px; font-size:14px; color:var(--muted)}
+  .caption b{color:var(--good); font-weight:600}
+  .stopped .caption b{color:var(--amber)}
+
+  /* ---- sections ---- */
+  section{padding:40px 0; border-top:1px solid var(--line)}
+  section h2{font-size:clamp(26px,4vw,36px); font-weight:700; letter-spacing:-.02em; max-width:20ch}
+  .sub{color:var(--muted); font-size:17px; max-width:64ch; margin:14px 0 0}
+  p{margin:14px 0 0}
+
+  .twocol{display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:26px}
+  @media (max-width:680px){.twocol{grid-template-columns:1fr}}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:22px; box-shadow:var(--shadow)}
+  .card h3{font-size:19px; font-weight:700; margin-bottom:2px}
+  .card p{font-size:15px; color:var(--muted)}
+  .card .ic{font-family:"JetBrains Mono",monospace; font-size:12px; font-weight:700; color:var(--aqua-deep); letter-spacing:.1em}
+
+  ol.flow{list-style:none; counter-reset:s; padding:0; margin:26px 0 0; display:grid; gap:2px}
+  ol.flow li{counter-increment:s; display:grid; grid-template-columns:auto 1fr; gap:16px; padding:16px 4px; border-bottom:1px solid var(--line)}
+  ol.flow li:last-child{border-bottom:0}
+  ol.flow li::before{content:counter(s,decimal-leading-zero); font-family:"JetBrains Mono",monospace; font-weight:700; font-size:13px; color:var(--aqua); padding-top:3px}
+  ol.flow b{font-weight:600}
+  ol.flow span{color:var(--muted); font-size:15px}
+
+  table.cmp{width:100%; border-collapse:collapse; margin-top:24px; font-size:15px}
+  table.cmp th,table.cmp td{text-align:left; padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+  table.cmp thead th{font-family:"JetBrains Mono",monospace; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint)}
+  table.cmp td:first-child{color:var(--faint); font-size:14px}
+  table.cmp tbody th{font-weight:600; color:var(--ink)}
+  .live-col{color:var(--aqua-deep)}
+
+  .why{display:grid; grid-template-columns:1fr 1fr; gap:14px 30px; margin-top:24px}
+  @media (max-width:680px){.why{grid-template-columns:1fr}}
+  .why div{padding:2px 0}
+  .why h3{font-size:16px; font-weight:700; display:flex; gap:9px; align-items:baseline}
+  .why h3 .n{font-family:"JetBrains Mono",monospace; color:var(--amber); font-size:13px}
+  .why p{font-size:14.5px; color:var(--muted); margin-top:5px}
+
+  .proof{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:8px 6px; margin-top:24px; box-shadow:var(--shadow)}
+  .proof .row{display:grid; grid-template-columns:180px 1fr; gap:14px; padding:12px 16px; border-bottom:1px solid var(--line); align-items:baseline}
+  .proof .row:last-child{border-bottom:0}
+  .proof .lbl{color:var(--muted); font-size:14px}
+  .proof .val{font-family:"JetBrains Mono",monospace; font-size:13px; word-break:break-all}
+  .proof .val .tag{color:var(--good); font-weight:700}
+  @media (max-width:560px){.proof .row{grid-template-columns:1fr}}
+
+  .stack{display:flex; gap:14px; flex-wrap:wrap; margin-top:16px}
+  .btn{display:inline-flex; align-items:center; gap:9px; font-weight:600; font-size:15px; text-decoration:none;
+    padding:12px 20px; border-radius:11px; border:1px solid var(--line); color:var(--ink); background:var(--surface)}
+  .btn.primary{background:var(--aqua); border-color:var(--aqua); color:#fff}
+  :root[data-theme="dark"] .btn.primary,:root:not([data-theme="light"]) .btn.primary{color:#07201f}
+  @media (prefers-color-scheme:light){.btn.primary{color:#fff}}
+  .btn:hover{border-color:var(--aqua)}
+
+  footer{border-top:1px solid var(--line); margin-top:8px; padding:30px 0 60px; color:var(--faint); font-size:14px}
+  footer a{color:var(--muted)}
+  .kicker{color:var(--amber); font-weight:600}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M2 21c4 0 4-8 8-8s4 8 8 8 4-8 8-8" stroke="var(--aqua)" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M2 27c4 0 4-6 8-6s4 6 8 6 4-6 8-6" stroke="var(--amber)" stroke-width="2.4" stroke-linecap="round" opacity=".8"/>
+      </svg>
+      flume
+    </div>
+    <nav class="toplinks">
+      <a href="#how">How it works</a>
+      <a href="#agents">Why machines want it</a>
+      <a href="https://github.com/kaspahttp402/flume">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow">Pay-per-second streaming · settled on Kaspa</div>
+    <h1>Pay for the seconds<br>that actually play.</h1>
+    <p class="lede">Tune in, and every second of stream is measured by both sides and paid for as it
+      arrives. <b>Stop, and the meter stops — mid-song, to the byte.</b></p>
+
+    <!-- live demo: the headline property, running -->
+    <div class="player playing" id="player">
+      <div class="head">
+        <span class="dot"></span>
+        <span class="nowlabel">now playing · <b>city-rain.opus</b></span>
+        <span class="state" id="state">Streaming</span>
+      </div>
+      <div class="wave" id="wave" aria-hidden="true"></div>
+      <div class="readout">
+        <div class="metric"><div class="k">Delivered</div><div class="v"><span id="bytes">0</span> <span style="font-size:.55em;color:var(--faint)">KB</span></div></div>
+        <div class="metric paid"><div class="k">You owe</div><div class="v"><span id="sompi">0.00000</span> <span style="font-size:.55em;color:var(--faint)">KAS</span></div></div>
+        <div class="controls">
+          <button class="act stop" id="toggle">Stop</button>
+          <button class="act" id="reset" disabled>Replay</button>
+        </div>
+      </div>
+      <div class="caption" id="caption">Playing. The bill climbs only while bytes arrive — <b>nothing is charged ahead of what you hear.</b></div>
+    </div>
+    <p style="font-size:13px;color:var(--faint);margin-top:10px">A live illustration of the rule flume enforces — not a real stream. Hit <b style="color:var(--ink);font-weight:600">Stop</b> and watch the bill freeze.</p>
+  </div>
+
+  <section id="why">
+    <div class="eyebrow">The idea</div>
+    <h2>No subscription. No up-front purchase. Just what you heard.</h2>
+    <p class="sub">Every way we pay for streams today bills the <em>whole thing</em> — a monthly plan, a
+      track, an album, a movie. Leave halfway and you still paid for all of it. flume's unit isn't the
+      whole thing. It's the byte. So the price tracks exactly what was delivered, and the moment you
+      walk away, the charging stops with you.</p>
+    <div class="twocol">
+      <div class="card">
+        <div class="ic">THE UNIT</div>
+        <h3>Bytes delivered, counted by both sides</h3>
+        <p>The meter is <code>net.bytes_delivered.v1</code>, exact to the octet. The broadcaster counts
+          what it sent; you count what you received; the two must agree or the stream halts. Nobody can
+          overstate the bill, because your own count refuses it.</p>
+      </div>
+      <div class="card">
+        <div class="ic">THE MOMENT</div>
+        <h3>Stop is a first-class event</h3>
+        <p>You drive your own position through the stream. A dropped connection is just a reconnect from
+          where you left off — no renegotiation, no double charge, no gap you paid for. Stopping is
+          simply the last byte you accepted.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="eyebrow">How a listen works</div>
+    <h2>Four steps, repeated until you stop.</h2>
+    <p class="sub">flume is <a href="https://github.com/kaspahttp402/spigot">spigot</a> — pay-per-byte
+      file delivery — with one change: the source is <b>open-ended</b> instead of a fixed file. A
+      recording, a radio feed, a video: all just bytes arriving over time, which is what the
+      <a href="https://github.com/kaspahttp402/metered">metered</a> protocol already meters.</p>
+    <ol class="flow">
+      <li><b>Read the guide.</b> <span>What's on the air — live or recorded — and the price. Free; you can't tune in to something you can't see.</span></li>
+      <li><b>Pull one babel at a time.</b> <span>A babel is the payment beat — 16&nbsp;KB by default, about a third of a second of audio — so paying never starves the buffer.</span></li>
+      <li><b>Both sides sign the count.</b> <span>The broadcaster returns the next bytes and its tally; you count the same bytes and sign yours; a payment voucher rides along with your signature.</span></li>
+      <li><b>Repeat from your own offset</b> <span>until you stop, the recording ends, or the funds run out. Whichever comes first, you paid for exactly what you received.</span></li>
+    </ol>
+  </section>
+
+  <section id="kinds">
+    <div class="eyebrow">Two kinds of station</div>
+    <h2>A recording ends. A live feed only stops when it closes.</h2>
+    <p class="sub">Everything else is identical, because a chunk of a stream and a chunk of a file are
+      the same thing: a range of bytes both sides can count.</p>
+    <div style="overflow-x:auto">
+    <table class="cmp">
+      <thead><tr><th></th><th>On-demand</th><th class="live-col">Live</th></tr></thead>
+      <tbody>
+        <tr><td>is</td><th>a recording — a fixed buffer</th><td class="live-col">a feed still being produced</td></tr>
+        <tr><td>length</td><th>known up front</th><td class="live-col">grows; unknown until it closes</td></tr>
+        <tr><td>the end</td><th>the last byte</th><td class="live-col">only when the broadcaster closes it</td></tr>
+        <tr><td>rewind</td><th>any offset, always</th><td class="live-col">only within a bounded window; older bytes are gone</td></tr>
+        <tr><td>at the edge</td><th>—</th><td class="live-col">you wait a beat and ask again — billed for none of the empty moments</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+
+  <section id="kaspa">
+    <div class="eyebrow">Why Kaspa</div>
+    <h2>Micropayments only work if settling is fast and nearly free.</h2>
+    <p class="sub">Paying by the second means thousands of tiny amounts. You can't touch a chain for
+      each one — so flume doesn't. It opens one <b>escrow channel</b>, streams against it off-chain with
+      signed vouchers, and settles once.</p>
+    <div class="twocol">
+      <div class="card">
+        <div class="ic">OPEN ONCE</div>
+        <h3>A channel, not a transaction per second</h3>
+        <p>You open an escrow channel with the broadcaster a single time. Every babel after that is an
+          off-chain voucher — instant, free. The broadcaster redeems the vouchers on-chain whenever it
+          likes; you refund whatever you didn't spend.</p>
+      </div>
+      <div class="card">
+        <div class="ic">KASPA'S FIT</div>
+        <h3>A BlockDAG that confirms in about a second</h3>
+        <p>Opening, claiming and refunding are ordinary Kaspa transactions — fast to confirm and cheap
+          enough that a 0.06&nbsp;KAS bill is worth settling. flume rides the same
+          <span class="mono">kaspa-x402</span> escrow that spigot does; nothing bespoke.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="agents">
+    <div class="eyebrow">Why machines will want this</div>
+    <h2>Agents pay for what they consume, not for a plan they can't sign up for.</h2>
+    <div class="why">
+      <div>
+        <h3><span class="n">01</span> No account, no subscription</h3>
+        <p>An autonomous agent can't fill in a signup form or hold a monthly plan. It can open a channel
+          and pay per byte. flume is billing an agent can actually use.</p>
+      </div>
+      <div>
+        <h3><span class="n">02</span> Honest to the byte</h3>
+        <p>A machine won't argue a bill — so the bill has to be provably right. Both sides count the same
+          bytes with zero tolerance; an overcharge is caught mechanically, not disputed later.</p>
+      </div>
+      <div>
+        <h3><span class="n">03</span> Consume exactly as much as you need</h3>
+        <p>Sample the first two seconds of a thousand feeds; take a whole track from one. The bill follows
+          the bytes, so partial consumption is a first-class, cheap operation.</p>
+      </div>
+      <div>
+        <h3><span class="n">04</span> Stall-safe by construction</h3>
+        <p>Agents run on flaky links. A stall is just a reconnect from the last accepted byte — no state
+          to renegotiate, no gap anyone paid for. The stream resumes where it stopped.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <div class="eyebrow">Proven, not promised</div>
+    <h2>The whole lifecycle runs live on Kaspa testnet-10.</h2>
+    <p class="sub">Open a channel, tune in paying per second, each babel vouchers as it plays, and the
+      broadcaster claims what the vouchers cover — all on chain, the same rail spigot settles on.</p>
+    <div class="proof">
+      <div class="row"><span class="lbl">Channel opened</span><span class="val"><span class="tag">genesis</span> · 197541effa703f011088b13378da7b179e908c5e74a7f8885eab39ed723b14c0</span></div>
+      <div class="row"><span class="lbl">Streamed &amp; vouchered</span><span class="val">300,000 bytes played in 5 babels · 0.06 KAS, billed as it played</span></div>
+      <div class="row"><span class="lbl">Broadcaster claimed</span><span class="val"><span class="tag">claim</span> · 529c40ebc3907a8a1f590ff5ce3787f2bad8728c088e45d3ecc4ae63a047b74e</span></div>
+      <div class="row"><span class="lbl">Pinned by tests</span><span class="val">9 passing — including “stopping mid-stream pays for what played and nothing after”</span></div>
+    </div>
+    <div class="stack">
+      <a class="btn primary" href="https://github.com/kaspahttp402/flume">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        flume on GitHub
+      </a>
+      <a class="btn" href="https://github.com/kaspahttp402/metered">The metered protocol</a>
+      <a class="btn" href="https://github.com/kaspahttp402/spigot">spigot (pay-per-file)</a>
+    </div>
+  </section>
+
+  <footer>
+    <p><span class="kicker">flume</span> is streaming built on the <b>metered</b> primitive and settled on
+    <b>Kaspa</b> via the kaspa-x402 escrow rail. MIT-licensed. Testnet only — the covenant language is
+    still pre-audit, so no mainnet money yet.</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var TICK_KB = 32, PRICE = 0.0000020; // KAS per KB, for illustration
+  var wave = document.getElementById('wave');
+  var bars = [];
+  for(var i=0;i<48;i++){var b=document.createElement('i'); b.style.height=(8+Math.abs(Math.sin(i*0.7))*46+((i*13)%17))+'%'; wave.appendChild(b); bars.push(b);}
+  var player=document.getElementById('player'), stateEl=document.getElementById('state'),
+      bytesEl=document.getElementById('bytes'), sompiEl=document.getElementById('sompi'),
+      capEl=document.getElementById('caption'), toggle=document.getElementById('toggle'),
+      reset=document.getElementById('reset');
+  var kb=0, playing=true, head=0, timer=null;
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+  function render(){
+    bytesEl.textContent = kb.toLocaleString();
+    sompiEl.textContent = (kb*PRICE).toFixed(5);
+    for(var i=0;i<bars.length;i++){
+      var active = playing && (i === (head%bars.length) || i === ((head+1)%bars.length));
+      bars[i].classList.toggle('on', active);
+    }
+  }
+  function tick(){ if(!playing) return; kb += TICK_KB; head++; render(); }
+  function start(){
+    if(timer) clearInterval(timer);
+    timer = reduce ? null : setInterval(tick, 130);
+    if(reduce){ kb=1200; render(); }
+  }
+  function stop(){
+    playing=false; if(timer) clearInterval(timer);
+    player.classList.remove('playing'); player.classList.add('stopped');
+    stateEl.textContent='Stopped';
+    for(var i=0;i<bars.length;i++) bars[i].classList.remove('on');
+    capEl.innerHTML='Stopped at '+kb.toLocaleString()+' KB. <b>You paid for exactly what played — not one byte after.</b>';
+    toggle.textContent='Resume'; reset.disabled=false; render();
+  }
+  function play(){
+    playing=true; player.classList.add('playing'); player.classList.remove('stopped');
+    stateEl.textContent='Streaming'; toggle.textContent='Stop';
+    capEl.innerHTML='Playing. The bill climbs only while bytes arrive — <b>nothing is charged ahead of what you hear.</b>';
+    start();
+  }
+  toggle.addEventListener('click', function(){ playing ? stop() : play(); });
+  reset.addEventListener('click', function(){ kb=0; head=0; reset.disabled=true; play(); });
+  render(); start();
+})();
+</script>
