@@ -84,8 +84,17 @@ delivers as it grows; and **stopping mid-stream pays only for what played** — 
 pinned by a test. Payment runs through metered's session; every babel is countersigned.
 
 On-chain settlement uses metered's kaspa-x402 channel — the same rail
-[spigot](https://github.com/kaspahttp402/spigot) settles on. Wiring the channel commands into the
-CLI is the next step; the metering and the stop-to-the-byte behaviour are done.
+[spigot](https://github.com/kaspahttp402/spigot) settles on. All the channel commands are wired into
+the CLI: `channel open`, `channels`, `tune --pay`, `refund`, `claim`. Proven live on testnet-10:
+open a channel, tune in paying per second, and each babel vouchers to the channel as it plays.
+
+**One constraint, the same one spigot documents.** A `claim` spends the escrow into a *covenant*
+continuation, and Kaspa's KIP-9 storage-mass rule charges a covenant output several times a plain
+one — so a claim that would leave only a small float behind is refused by consensus. The escrow
+must stay large relative to any single claim. flume checks this *before* it broadcasts and, when a
+channel is too small, refuses with a plain message ("open a larger channel") instead of letting the
+node reject the transaction with an opaque one. Open channels comfortably above what you will claim
+at once (spigot cleared this at 0.2 KAS; a 0.1 KAS channel was too small for a 0.06 KAS claim).
 
 ## Licence
 

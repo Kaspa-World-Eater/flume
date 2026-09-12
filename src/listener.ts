@@ -47,6 +47,8 @@ export interface TuneOptions {
   onBytes: (chunk: Uint8Array) => void;
   /** Return true to stop. Checked before every chunk -- this is how a listener leaves at any moment. */
   stop?: () => boolean;
+  /** Stop after this many ms OF PLAYBACK. The clock starts once tuned in, not during the handshake. */
+  playMs?: number;
   /** How long to wait at a live edge before asking again, ms. */
   liveGapMs?: number;
   expectedNetwork?: string;
@@ -73,13 +75,17 @@ export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; s
   // nothing new, again and again, until the feed is clearly over.
   const fixedLength = entry.kind === 'on-demand' ? entry.available : null;
   const gap = opts.liveGapMs ?? 250;
+  // The playback clock starts NOW -- after the session and any channel verification, not during
+  // them -- so "listen for 3 seconds" means three seconds of stream, not three seconds that a slow
+  // handshake could eat before a single byte arrived.
+  const deadline = opts.playMs ? Date.now() + opts.playMs : Infinity;
   let offset = 0;
   let chunks = 0;
   let idle = 0;
   let until: TuneReceipt['until'] = 'ended';
 
   while (true) {
-    if (opts.stop?.()) { until = 'stopped'; break; }
+    if (opts.stop?.() || Date.now() >= deadline) { until = 'stopped'; break; }
     if (fixedLength !== null && offset >= fixedLength) { until = 'ended'; break; }
 
     let outcome;
