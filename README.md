@@ -85,8 +85,9 @@ pinned by a test. Payment runs through metered's session; every babel is counter
 
 On-chain settlement uses metered's kaspa-x402 channel — the same rail
 [spigot](https://github.com/kaspahttp402/spigot) settles on. All the channel commands are wired into
-the CLI: `channel open`, `channels`, `tune --pay`, `refund`, `claim`. Proven live on testnet-10:
-open a channel, tune in paying per second, and each babel vouchers to the channel as it plays.
+the CLI: `channel open`, `channels`, `tune --pay`, `refund`, `claim`. The **whole lifecycle is proven
+live on testnet-10** — open a channel, tune in paying per second, each babel vouchers to the channel
+as it plays, and the broadcaster claims what the vouchers cover (genesis `197541ef`, claim `529c40eb`).
 
 **One constraint, the same one spigot documents.** A `claim` spends the escrow into a *covenant*
 continuation, and Kaspa's KIP-9 storage-mass rule charges a covenant output several times a plain
