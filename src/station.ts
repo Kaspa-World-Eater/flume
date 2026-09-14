@@ -24,6 +24,10 @@ export interface Station {
   available(): number;
   /** True once no more bytes will ever come (an on-demand track played to its end). */
   ended(offset: number): boolean;
+  /** Lowest offset still retained: 0 for a recording; rises for a live feed as its window slides. */
+  floor(): number;
+  /** True once the source will produce no more bytes ever (recording, or a live feed closed). */
+  closed(): boolean;
 }
 
 /** A recording: a fixed buffer, offset-addressable. On-demand streaming is just this. */
@@ -34,6 +38,8 @@ export function onDemand(name: string, bytes: Uint8Array): Station {
     read: (offset, max) => bytes.subarray(offset, Math.min(bytes.length, offset + max)),
     available: () => bytes.length,
     ended: (offset) => offset >= bytes.length,
+    floor: () => 0,
+    closed: () => true, // a recording's bytes all exist already; a live listener ends via its length
   };
 }
 
@@ -52,37 +58,45 @@ export function onDemand(name: string, bytes: Uint8Array): Station {
 export class LiveStation implements Station {
   readonly kind = 'live';
   private buffer: number[] = [];
-  private floor = 0;
-  private closed = false;
+  private windowFloor = 0;
+  private shut = false;
 
   constructor(readonly name: string, private readonly windowBytes = 4 * 1024 * 1024) {}
 
   push(bytes: Uint8Array): void {
-    if (this.closed) throw new Error(`station ${this.name} is closed`);
+    if (this.shut) throw new Error(`station ${this.name} is closed`);
     for (const b of bytes) this.buffer.push(b);
     const overflow = this.buffer.length - this.windowBytes;
     if (overflow > 0) {
       this.buffer.splice(0, overflow);
-      this.floor += overflow;
+      this.windowFloor += overflow;
     }
   }
 
   close(): void {
-    this.closed = true;
+    this.shut = true;
   }
 
   read(offset: number, max: number): Uint8Array {
-    if (offset < this.floor) throw new StationRewind(this.name, offset, this.floor);
-    const start = offset - this.floor;
+    if (offset < this.windowFloor) throw new StationRewind(this.name, offset, this.windowFloor);
+    const start = offset - this.windowFloor;
     return Uint8Array.from(this.buffer.slice(start, start + max));
   }
 
   available(): number {
-    return this.floor + this.buffer.length;
+    return this.windowFloor + this.buffer.length;
   }
 
   ended(offset: number): boolean {
-    return this.closed && offset >= this.available();
+    return this.shut && offset >= this.available();
+  }
+
+  floor(): number {
+    return this.windowFloor;
+  }
+
+  closed(): boolean {
+    return this.shut;
   }
 }
 

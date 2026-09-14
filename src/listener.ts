@@ -1,5 +1,9 @@
 /**
- * The buying half: tune in, pull the stream a chunk at a time, and pay for the seconds that play.
+ * The buying half: tune in, pull the stream a chunk at a time, and pay for the BYTES that arrive.
+ *
+ * A note on "per second": flume meters delivered bytes and the elapsed request time, not decoded
+ * seconds of media. `playMs` bounds how long it keeps pulling; it does not bill by playback time. A
+ * codec-aware pay-per-second product would sit on top of this, converting seconds to byte ranges.
  *
  * The one property that makes streaming different from buying a file: **the listener decides when
  * to stop, and stops paying at that byte.** No plan, no cancellation, no minimum. `tune` pulls
@@ -17,7 +21,7 @@ import { GUIDE_PATH } from './broadcaster.js';
 export class OffTheAir extends Error {}
 
 export interface Guide {
-  stations: { name: string; kind: 'on-demand' | 'live'; available: number }[];
+  stations: { name: string; kind: 'on-demand' | 'live'; available: number; floor: number; closed: boolean }[];
   terms: { unit: string; meter: string; unitPriceSompi: number; babelUnits: number; network: string; responseWindowDaa: number };
   providerPubkey: string;
 }
@@ -43,8 +47,9 @@ export interface TuneOptions {
   base: string;
   listenerSk: string;
   station: string;
-  /** Called with each chunk of bytes as it plays. This is where audio/video is handed to a decoder. */
-  onBytes: (chunk: Uint8Array) => void;
+  /** Called with each chunk as it arrives. May return a promise; it is awaited, so an async decoder
+   *  or sink can apply backpressure -- the next paid chunk is not pulled until this resolves. */
+  onBytes: (chunk: Uint8Array) => void | Promise<void>;
   /** Return true to stop. Checked before every chunk -- this is how a listener leaves at any moment. */
   stop?: () => boolean;
   /** Stop after this many ms OF PLAYBACK. The clock starts once tuned in, not during the handshake. */
@@ -54,6 +59,9 @@ export interface TuneOptions {
   expectedNetwork?: string;
   /** A channel this listener holds with the broadcaster, to pay through (SPEC.md 3.5). */
   channel?: ChannelProposal;
+  /** Start pulling from this absolute source offset (resume). Default: a live feed's retained floor,
+   *  or 0 for a recording. */
+  fromOffset?: number;
 }
 
 /**
@@ -75,13 +83,14 @@ export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; s
   // nothing new, again and again, until the feed is clearly over.
   const fixedLength = entry.kind === 'on-demand' ? entry.available : null;
   const gap = opts.liveGapMs ?? 250;
+  // A late listener cannot start below a live feed's retained floor; a recording resumes wherever asked.
+  const startOffset = opts.fromOffset ?? (entry.kind === 'live' ? entry.floor : 0);
   // The playback clock starts NOW -- after the session and any channel verification, not during
   // them -- so "listen for 3 seconds" means three seconds of stream, not three seconds that a slow
   // handshake could eat before a single byte arrived.
   const deadline = opts.playMs ? Date.now() + opts.playMs : Infinity;
-  let offset = 0;
+  let offset = startOffset;
   let chunks = 0;
-  let idle = 0;
   let until: TuneReceipt['until'] = 'ended';
 
   while (true) {
@@ -99,16 +108,16 @@ export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; s
     }
 
     if (outcome.content.length === 0) {
-      // A live edge, or the end. Wait a beat; if the broadcaster has closed the station it will
-      // keep returning empty, and a caller watching an on-demand station can stop on its own.
-      idle += 1;
-      if (idle > MAX_IDLE) { until = 'ended'; break; }
+      // Empty means "nothing new right now" OR "the feed is over" -- and those are different. Ask the
+      // guide (unpaid) which it is: only an explicitly CLOSED station we have caught up to is the end.
+      // A live feed that is merely quiet is not; we wait at the edge without buying empty chunks.
+      const cur = (await readGuide(opts.base)).stations.find((st) => st.name === opts.station);
+      if (cur && cur.closed && offset >= cur.available) { until = 'ended'; break; }
       await new Promise((r) => setTimeout(r, gap));
       continue;
     }
 
-    idle = 0;
-    opts.onBytes(outcome.content);
+    await opts.onBytes(outcome.content);
     offset += outcome.content.length;
     chunks += 1;
   }
@@ -117,7 +126,7 @@ export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; s
     session,
     receipt: {
       station: opts.station,
-      bytesPlayed: offset,
+      bytesPlayed: offset - startOffset, // bytes actually delivered this listen, not the absolute edge
       sompiSpent: session.spentSompi,
       chunks,
       until,
@@ -126,8 +135,6 @@ export async function tune(opts: TuneOptions): Promise<{ receipt: TuneReceipt; s
   };
 }
 
-/** Empty chunks tolerated at a live edge before the stream is treated as over. */
-const MAX_IDLE = 40;
 
 const isExhausted = (err: unknown): boolean =>
   err instanceof Error && /funds|cover|exhaust|babelUnits|maxBabels/i.test(err.message);

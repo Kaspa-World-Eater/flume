@@ -1,9 +1,10 @@
 # flume
 
-**Pay-per-second streaming. You pay for the audio and video that actually plays — and the instant
-you stop, so does the meter.**
+**Pay-as-you-stream. You pay for the bytes actually delivered — and the instant you stop, so does
+the meter.** (flume meters delivered bytes and elapsed request time, not decoded seconds of media; a
+codec-aware pay-per-*second* product would sit on top, mapping seconds to byte ranges.)
 
-No subscription, no plan, no cancellation. Tune in, and each second of stream is measured by both
+No subscription, no plan, no cancellation. Tune in, and each chunk of stream is measured by both
 sides and paid for as it arrives. Close the tab and you have paid for exactly what you heard, to the
 byte. Built on [metered](https://github.com/kaspahttp402/metered-protocol) and settled on Kaspa.
 
@@ -88,7 +89,7 @@ pinned by a test. Payment runs through metered's session; every babel is counter
 On-chain settlement uses metered's kaspa-x402 channel — the same rail
 [spigot](https://github.com/kaspahttp402/spigot) settles on. All the channel commands are wired into
 the CLI: `channel open`, `channels`, `tune --pay`, `refund`, `claim`. The **whole lifecycle is proven
-live on testnet-10** — open a channel, tune in paying per second, each babel vouchers to the channel
+live on testnet-10** — open a channel, tune in paying per byte as it streams, each babel vouchers to the channel
 as it plays, and the broadcaster claims what the vouchers cover (genesis `197541ef`, claim `529c40eb`).
 
 **One constraint, the same one spigot documents.** A `claim` spends the escrow into a *covenant*

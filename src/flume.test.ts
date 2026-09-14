@@ -59,7 +59,7 @@ test('A WHOLE RECORDING PLAYS THROUGH, byte for byte', async () => {
   const air = await onAir([onDemand('song', bytes)], 256);
   try {
     const got: number[] = [];
-    const { receipt } = await tune({ base: air.base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK, onBytes: (c) => got.push(...c) });
+    const { receipt } = await tune({ base: air.base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK, onBytes: (c) => { got.push(...c); } });
     assert.deepEqual(new Uint8Array(got), bytes, 'every byte, in order');
     assert.equal(receipt.bytesPlayed, 2000);
     assert.equal(receipt.sompiSpent, 2000 * PRICE, 'paid for exactly what played');
@@ -100,7 +100,7 @@ test('A LIVE FEED delivers as it grows, and waiting at the edge costs nothing', 
     const start = Date.now();
     const { receipt } = await tune({
       base: air.base, listenerSk: LISTENER_SK, station: 'radio', expectedNetwork: NETWORK, liveGapMs: 20,
-      onBytes: (c) => got.push(...c),
+      onBytes: (c) => { got.push(...c); },
       stop: () => Date.now() - start > 700,
     });
     clearInterval(clock);
@@ -173,4 +173,69 @@ test('the storage-mass guard refuses a too-small channel and clears a comfortabl
   // A claim that leaves nothing behind is refused outright.
   assert.ok(claimTooSmall(chan(10_000_000n), 10_000_000n, 500_000n), 'no continuation is refused');
   assert.equal(STORAGE_MASS_LIMIT, 500_000n);
+});
+
+test('a late listener starts at the retained window floor, not a dropped offset', async () => {
+  const radio = new LiveStation('radio', 500); // small window
+  radio.push(recording(1200)); // window slides: floor = 700, available = 1200
+  radio.close();
+  const air = await onAir([radio], 128);
+  try {
+    const got: number[] = [];
+    const { receipt } = await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'radio', expectedNetwork: NETWORK, liveGapMs: 5,
+      onBytes: (c) => { got.push(...c); },
+    });
+    assert.equal(receipt.until, 'ended');
+    assert.equal(receipt.bytesPlayed, 500, 'played exactly the retained window, no rewind error');
+    assert.deepEqual(new Uint8Array(got), recording(1200).subarray(700), 'the retained bytes, from the floor');
+  } finally { await air.stop(); }
+});
+
+test('a quiet live feed keeps waiting -- it is NOT treated as ended after some idle beats', async () => {
+  const radio = new LiveStation('radio');
+  radio.push(recording(400));
+  const air = await onAir([radio], 128);
+  try {
+    const start = Date.now();
+    const { receipt } = await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'radio', expectedNetwork: NETWORK, liveGapMs: 5,
+      onBytes: () => {}, stop: () => Date.now() - start > 300, // idles well past the old 40-beat cutoff
+    });
+    assert.equal(receipt.until, 'stopped', 'an open but quiet station is not the end; only the caller stopping is');
+    assert.equal(receipt.bytesPlayed, 400);
+  } finally { await air.stop(); }
+});
+
+test('closing a live feed ends the listen at its last byte', async () => {
+  const radio = new LiveStation('radio');
+  radio.push(recording(400));
+  radio.close();
+  const air = await onAir([radio], 128);
+  try {
+    const { receipt } = await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'radio', expectedNetwork: NETWORK, liveGapMs: 5,
+      onBytes: () => {},
+    });
+    assert.equal(receipt.until, 'ended', 'a closed, caught-up station is the end');
+    assert.equal(receipt.bytesPlayed, 400);
+  } finally { await air.stop(); }
+});
+
+test('onBytes is awaited, so an async sink applies backpressure (never two in flight)', async () => {
+  const air = await onAir([onDemand('song', recording(2000))], 256);
+  try {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    await tune({
+      base: air.base, listenerSk: LISTENER_SK, station: 'song', expectedNetwork: NETWORK,
+      onBytes: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 3));
+        inFlight -= 1;
+      },
+    });
+    assert.equal(maxInFlight, 1, 'the loop awaited each onBytes before pulling the next chunk');
+  } finally { await air.stop(); }
 });

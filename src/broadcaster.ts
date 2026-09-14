@@ -57,6 +57,10 @@ interface GuideEntry {
   name: string;
   kind: Station['kind'];
   available: number;
+  /** Lowest offset still retained -- where a late listener must start on a live feed. */
+  floor: number;
+  /** True once no more bytes will ever come (recording, or a live feed closed). */
+  closed: boolean;
 }
 
 /**
@@ -82,7 +86,7 @@ export function broadcast(opts: BroadcastOptions): { server: Server; service: Me
   const metered = meteredHandler({ service });
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method === 'GET' && (req.url ?? '') === GUIDE_PATH) {
-      const guide: GuideEntry[] = opts.stations.map((s) => ({ name: s.name, kind: s.kind, available: s.available() }));
+      const guide: GuideEntry[] = opts.stations.map((s) => ({ name: s.name, kind: s.kind, available: s.available(), floor: s.floor(), closed: s.closed() }));
       const body = JSON.stringify({ stations: guide, terms: opts.terms, providerPubkey: opts.providerPubkey });
       res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
       res.end(body);
