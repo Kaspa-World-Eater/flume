@@ -17,14 +17,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ChannelProposal } from 'metered-protocol';
 import {
-  openChannel, claimChannel, refundChannel, channelVerifier, proposalFor, redeemScriptFor, loadSdk, awaitUtxo,
+  openChannel, claimChannel, refundChannel, channelVerifier, proposalFor, redeemScriptFor, loadSdk, awaitUtxo, spendWallet,
   type Channel, type Network, type Any,
 } from 'metered-protocol/rail';
 import type { Voucher } from 'metered-protocol';
 import { claimTooSmall } from './storage-mass.js';
 
 const HOME = join(homedir(), '.flume', 'channels');
-const CARVE_FEE = 250_000n;
 export const GENESIS_FEE = 500_000n;
 export const CLAIM_FEE = 500_000n;
 export const REFUND_FEE = 500_000n;
@@ -32,7 +31,7 @@ export const REFUND_FEE = 500_000n;
 export class NoChannel extends Error {}
 
 /** One record per channel, by covenant id. Amounts are strings on disk because they are bigints. */
-interface Record { channel: Channel; sellerPubkey: string; openedAt: string }
+export interface Record { channel: Channel; sellerPubkey: string; openedAt: string }
 
 const file = (covenantId: string) => join(HOME, `${covenantId}.json`);
 const dehydrate = (_k: string, v: unknown) => (typeof v === 'bigint' ? `${v}n` : v);
@@ -54,9 +53,21 @@ export function channels(): Record[] {
   return readdirSync(HOME).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(HOME, f), 'utf8'), hydrate) as Record);
 }
 
+/**
+ * The NEWEST open record with this seller. `timeoutDaa` is absolute (opening DAA + window), so the
+ * highest one was opened last. An older channel left on disk -- abandoned, never refunded, so
+ * still showing a balance -- is not the one to bill: on 2026-09-22 it was, and the broadcaster
+ * refused every babel.
+ */
+export function newestOpen(records: Record[], sellerPubkey: string): Record | null {
+  return records
+    .filter((r) => r.sellerPubkey === sellerPubkey && r.channel.active.amount > 0n)
+    .reduce<Record | null>((best, r) => (!best || r.channel.timeoutDaa > best.channel.timeoutDaa ? r : best), null);
+}
+
 /** The buyer's open channel with this seller, if it has one with anything left in it. */
 export function channelWith(sellerPubkey: string): Record | null {
-  return channels().find((r) => r.sellerPubkey === sellerPubkey && r.channel.active.amount > 0n) ?? null;
+  return newestOpen(channels(), sellerPubkey);
 }
 
 export async function connect(network: Network): Promise<{ sdk: Any; rpc: Any; networkId: Any }> {
@@ -69,21 +80,11 @@ export async function connect(network: Network): Promise<{ sdk: Any; rpc: Any; n
 
 /** Their genesis wants one input of exactly escrow + fee. Ordinary wallets do not hold that, so make it. */
 async function carve(rpc: Any, sdk: Any, sk: string, network: Network, amount: bigint) {
-  const priv = new sdk.PrivateKey(sk);
-  const from = priv.toKeypair().toAddress(new sdk.NetworkId(network)).toString();
-  const { entries } = await rpc.getUtxosByAddresses([from]);
-  if (entries.length === 0) throw new Error(`nothing to spend at ${from}`);
-  const src = entries.reduce((a: Any, b: Any) => (b.amount > a.amount ? b : a));
-  if (src.amount < amount + CARVE_FEE) throw new Error(`largest UTXO ${src.amount} cannot fund ${amount} plus fee`);
-  const tx = sdk.createTransaction([src], [{ address: from, amount }, { address: from, amount: src.amount - amount - CARVE_FEE }], 0n, undefined, 0);
-  tx.version = 1;
-  tx.gas = 0n;
-  for (const i of tx.inputs) { i.sigOpCount = 0; i.computeBudget = 10; }
-  tx.finalize();
-  const { transactionId } = await rpc.submitTransaction({ transaction: sdk.signTransaction(tx, [priv], true), allowOrphan: false });
+  const from = new sdk.PrivateKey(sk).toKeypair().toAddress(new sdk.NetworkId(network)).toString();
+  const { txid } = await spendWallet(rpc, sdk, sk, network, [{ address: from, amount }]);
   const landed = await awaitUtxo(rpc, from, amount);
   if (!landed) throw new Error('the carved UTXO never appeared');
-  return { txid: String(transactionId), index: Number(landed.outpoint.index), amount };
+  return { txid, index: Number(landed.outpoint.index), amount };
 }
 
 /** BUYER: open a channel with a seller. Written to disk before this returns. */

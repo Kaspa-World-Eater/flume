@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pay-per-second streaming \u2014 audio and video metered by both sides and settled on Kaspa.",
+  "description": "Pay-per-second streaming — audio and video metered by both sides and settled on Kaspa.",
   "bin": {
     "flume": "./bin/flume.ts"
   },
@@ -13,8 +13,8 @@
     "tune": "tsx bin/flume.ts tune"
   },
   "dependencies": {
-    "metered-protocol": "^2.0.0",
-    "@kaspa-x402/covenant": "0.1.0-alpha.10"
+    "@kaspa-x402/covenant": "0.1.0-alpha.10",
+    "metered-protocol": "^2.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

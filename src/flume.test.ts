@@ -239,3 +239,19 @@ test('onBytes is awaited, so an async sink applies backpressure (never two in fl
     assert.equal(maxInFlight, 1, 'the loop awaited each onBytes before pulling the next chunk');
   } finally { await air.stop(); }
 });
+
+/*
+ * On 2026-09-22 `tune --pay` billed a channel abandoned on 09-14 -- first on disk, never refunded,
+ * so still "open" -- and the broadcaster refused it. The channel to bill is the newest one.
+ */
+test('the channel to bill is the NEWEST open one with this broadcaster, not the first on disk', async () => {
+  const { newestOpen } = await import('./channel.js');
+  const rec = (covenantId: string, timeoutDaa: bigint, amount: bigint, sellerPubkey = 'aa') =>
+    ({ sellerPubkey, openedAt: '', channel: { covenantId, timeoutDaa, active: { amount } } }) as unknown as Parameters<typeof newestOpen>[0][number];
+  const old = rec('old', 100n, 50n);
+  const newer = rec('newer', 200n, 50n);
+  const spent = rec('spent', 300n, 0n);
+  const other = rec('other', 400n, 50n, 'bb');
+  assert.equal(newestOpen([old, spent, newer, other], 'aa')?.channel.covenantId, 'newer');
+  assert.equal(newestOpen([spent], 'aa'), null);
+});

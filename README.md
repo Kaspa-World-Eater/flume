@@ -89,8 +89,20 @@ pinned by a test. Payment runs through metered's session; every babel is counter
 On-chain settlement uses metered's kaspa-x402 channel — the same rail
 [spigot](https://github.com/kaspahttp402/spigot) settles on. All the channel commands are wired into
 the CLI: `channel open`, `channels`, `tune --pay`, `refund`, `claim`. The **whole lifecycle is proven
-live on testnet-10** — open a channel, tune in paying per byte as it streams, each babel vouchers to the channel
-as it plays, and the broadcaster claims what the vouchers cover (genesis `197541ef`, claim `529c40eb`).
+live on testnet-10** (2026-09-22) — open a channel, tune in paying per byte as it streams, each babel
+vouchers to the channel as it plays, the broadcaster claims what the vouchers cover, and the listener
+refunds the rest after the timeout:
+
+| Step | Transaction |
+|---|---|
+| channel opened | [`553274eb54dde0fa3d2238e471ec38bbfe10ad4a241652fda06488e830786305`](https://explorer-tn10.kaspa.org/txs/553274eb54dde0fa3d2238e471ec38bbfe10ad4a241652fda06488e830786305) — 0.5 KAS escrow, covenantId `6151f167708dab1e8095fb277679b1af472de3d3e839656436cef3fe9746620e` |
+| streamed & vouchered | 300,000 bytes in 19 babels · 0.06 KAS, billed as it played, byte-identical on arrival |
+| broadcaster claimed | [`e50033355ca11ea1b7686b16ae8af972debca862ad4a38feef15eeadb6a41772`](https://explorer-tn10.kaspa.org/txs/e50033355ca11ea1b7686b16ae8af972debca862ad4a38feef15eeadb6a41772) — 0.055 KAS collected (the bill less the 0.005 fee) |
+| listener refunded | [`c740899276268a3303530bedda6289f0d054bae38ab5ffbf1fadd8e0763aa5f7`](https://explorer-tn10.kaspa.org/txs/c740899276268a3303530bedda6289f0d054bae38ab5ffbf1fadd8e0763aa5f7) — 0.435 KAS back after the timeout |
+
+Every id is whole, linked, and archived as `docs/proofs/<txid>.json` the moment the node accepted it
+— the public testnet-10 index serves only about the last six days, and an earlier run's ids (2026-09-14)
+had already stopped resolving by the time this one replaced them.
 
 **One constraint, the same one spigot documents.** A `claim` spends the escrow into a *covenant*
 continuation, and Kaspa's KIP-9 storage-mass rule charges a covenant output several times a plain
